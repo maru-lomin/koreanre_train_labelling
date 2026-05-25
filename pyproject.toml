@@ -1,0 +1,16 @@
+[project]
+name = "rag-kv-llm-train"
+version = "0.1.0"
+description = "LoRA fine-tuning and local inference smoke tests for RAG-KV Qwen chat JSON."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.0.0",
+    "datasets>=3.0.0,<4.0.0",
+    "fastapi>=0.136.1",
+    "peft>=0.14.0",
+    "pyarrow>=15.0.0,<18.0.0",
+    "torch>=2.4.0,<2.6",
+    "transformers>=4.46.0",
+    "uvicorn>=0.46.0",
+]

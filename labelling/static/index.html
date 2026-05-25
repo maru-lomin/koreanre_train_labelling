@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>train.jsonl 검수</title>
+  <style>
+    :root {
+      --border: #c8ccd0;
+      --bg: #f4f5f7;
+      --panel: #fff;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+      background: var(--bg);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    header button, header .meta {
+      font-size: 14px;
+    }
+    header button {
+      padding: 6px 12px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+    }
+    header button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    header button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    header label.save-target {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #374151;
+    }
+    header select#save-date-select {
+      min-width: 220px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 13px;
+    }
+    .meta { color: #444; }
+    .warn { color: #b45309; font-weight: 600; }
+    .verify-badge {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #f3f4f6;
+      color: #4b5563;
+    }
+    .verify-badge.done {
+      background: #dcfce7;
+      border-color: #86efac;
+      color: #166534;
+    }
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr;
+      gap: 0;
+      min-height: 0;
+    }
+    .pdf-pane {
+      border-right: 1px solid var(--border);
+      background: #222;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .pdf-pane h2 {
+      margin: 0;
+      padding: 6px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #eee;
+      background: #333;
+    }
+    .pdf-frame-wrap {
+      flex: 1;
+      min-height: 0;
+    }
+    .pdf-frame-wrap iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #444;
+    }
+    .pdf-placeholder {
+      color: #aaa;
+      padding: 24px;
+      text-align: center;
+    }
+    .right {
+      display: grid;
+      grid-template-rows: minmax(100px, 1fr) 2fr 1fr;
+      min-height: 0;
+      background: var(--panel);
+    }
+    .block {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .block.meta-block {
+      display: grid;
+      grid-template-rows: minmax(100px, 30%) 1fr;
+      min-height: 0;
+    }
+    .block.meta-block .sub-block {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .block.meta-block .sub-block:last-child {
+      border-bottom: 0;
+    }
+    .block:last-child { border-bottom: 0; }
+    .block h2 {
+      margin: 0;
+      padding: 8px 12px;
+      font-size: 14px;
+      background: #eef2ff;
+      border-bottom: 1px solid var(--border);
+    }
+    .scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, "Cascadia Code", monospace;
+    }
+    textarea.assistant {
+      flex: 1;
+      width: 100%;
+      resize: none;
+      border: 0;
+      padding: 10px 12px;
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-size: 13px;
+      line-height: 1.4;
+      min-height: 120px;
+    }
+    #assistant-editor-root {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #assistant-fields {
+      flex: 1;
+      overflow: auto;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .kv-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .kv-key {
+      font-size: 12px;
+      font-weight: 600;
+      color: #1f2937;
+      font-family: ui-monospace, "Cascadia Code", monospace;
+    }
+    .kv-hint {
+      font-size: 11px;
+      color: #6b7280;
+      line-height: 1.35;
+    }
+    .kv-value textarea,
+    .kv-value input[type="text"] {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-size: 13px;
+      line-height: 1.4;
+      background: #fff;
+    }
+    .kv-value textarea {
+      min-height: 100px;
+      resize: vertical;
+      white-space: pre-wrap;
+    }
+    #assistant-parse-error {
+      padding: 8px 12px 0;
+      font-size: 13px;
+    }
+    .actions {
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .status {
+      font-size: 13px;
+      margin-left: auto;
+      color: #166534;
+    }
+    .status.err { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <header>
+    <button type="button" id="btn-prev">이전</button>
+    <button type="button" id="btn-next">다음</button>
+    <span class="meta" id="nav-meta">—</span>
+    <span class="meta" id="id-meta"></span>
+    <span class="verify-badge" id="verify-badge" title="검수 기록은 labelling/verified/*.json 에서 id 기준으로 병합됩니다.">미검수</span>
+    <label class="save-target" title="저장할 날짜 파일. 목록은 디스크에 있는 YYYY-MM-DD.json 입니다.">
+      저장 파일
+      <select id="save-date-select" aria-label="검수 저장 날짜 파일"></select>
+    </label>
+    <button type="button" id="btn-verified-refresh" title="검수 JSON 목록과 병합 캐시를 다시 읽습니다.">검수 목록 새로고침</button>
+    <button type="button" class="primary" id="btn-submit">Submit (검수 저장)</button>
+    <button type="button" id="btn-reload">JSONL 다시 읽기</button>
+    <span class="status" id="status"></span>
+  </header>
+  <main>
+    <section class="pdf-pane">
+      <h2>원본 PDF</h2>
+      <div class="pdf-frame-wrap" id="pdf-wrap">
+        <div class="pdf-placeholder" id="pdf-ph">불러오는 중…</div>
+      </div>
+    </section>
+    <section class="right">
+      <div class="block">
+        <h2>User content</h2>
+        <div class="scroll" id="user-content"></div>
+      </div>
+      <div class="block meta-block">
+        <div class="sub-block">
+          <h2>Target Field (user 메시지)</h2>
+          <div class="scroll" id="target-field"></div>
+        </div>
+        <div class="sub-block">
+          <h2>Evidence (user 메시지)</h2>
+          <div class="scroll" id="evidence"></div>
+        </div>
+      </div>
+      <div class="block">
+        <h2>Output JSON schema</h2>
+        <div id="assistant-editor-root">
+          <div id="assistant-parse-error" class="warn" style="display: none"></div>
+          <div id="assistant-fields"></div>
+          <textarea class="assistant" id="assistant-fallback" spellcheck="false" style="display: none" title="JSON 파싱에 실패한 경우 원문을 직접 수정합니다."></textarea>
+        </div>
+        <div class="actions">
+          <span class="meta" id="save-hint">저장: 선택한 날짜의 JSON (미선택 시 서버 오늘). 읽기는 verified 아래 모든 날짜 파일을 병합.</span>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    let state = {
+      index: 0,
+      row: null,
+      messages: [],
+      assistantMode: "fields",
+      emptyAssistantObject: false,
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    /** How each top-level key was edited (for round-trip). */
+    function fieldKindForValue(v) {
+      if (v === null) return "null";
+      const t = typeof v;
+      if (t === "boolean") return "boolean";
+      if (t === "number" && Number.isFinite(v)) return "number";
+      if (t === "string") return "string";
+      if (Array.isArray(v)) {
+        if (v.length === 0) return "array-int";
+        if (v.every((x) => typeof x === "number" && Number.isFinite(x) && Number.isInteger(x)))
+          return "array-int";
+        return "array-json";
+      }
+      if (t === "object") return "object-json";
+      return "string";
+    }
+
+    function formatIntListForInput(arr) {
+      return arr.map(String).join(", ");
+    }
+
+    function parseIntListFromInput(s) {
+      const t = String(s).trim();
+      if (!t) return [];
+      const parts = t.split(/[\s,]+/).filter(Boolean);
+      const out = [];
+      for (const p of parts) {
+        const n = Number(p);
+        if (!Number.isInteger(n)) {
+          throw new Error(`정수가 아님: "${p}"`);
+        }
+        out.push(n);
+      }
+      return out;
+    }
+
+    function renderAssistantEditor(assistantText) {
+      const fieldsEl = $("assistant-fields");
+      const errEl = $("assistant-parse-error");
+      const fb = $("assistant-fallback");
+      if (!fieldsEl || !fb) return;
+
+      fieldsEl.innerHTML = "";
+      errEl.style.display = "none";
+      errEl.textContent = "";
+      fb.style.display = "none";
+      fb.value = assistantText || "";
+      state.assistantMode = "fields";
+      state.emptyAssistantObject = false;
+
+      const raw = (assistantText || "").trim();
+      if (!raw) {
+        state.assistantMode = "fallback";
+        fb.style.display = "block";
+        fb.value = "";
+        errEl.style.display = "block";
+        errEl.textContent = "assistant 내용이 비어 있습니다. 아래에 JSON을 입력하거나 행을 확인하세요.";
+        return;
+      }
+
+      let obj;
+      try {
+        obj = JSON.parse(assistantText);
+      } catch (e) {
+        state.assistantMode = "fallback";
+        fb.style.display = "block";
+        fb.value = assistantText;
+        errEl.style.display = "block";
+        errEl.textContent = `JSON 파싱 실패 — 원문 편집 모드: ${e.message || e}`;
+        return;
+      }
+
+      if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+        state.assistantMode = "fallback";
+        fb.style.display = "block";
+        fb.value = assistantText;
+        errEl.style.display = "block";
+        errEl.textContent = "assistant가 객체(JSON object)가 아닙니다. 원문을 수정하세요.";
+        return;
+      }
+
+      const keys = Object.keys(obj);
+      if (keys.length === 0) {
+        state.emptyAssistantObject = true;
+        const row = document.createElement("div");
+        row.className = "meta";
+        row.textContent =
+          "(빈 객체 {} — Submit 시 그대로 저장됩니다. 키를 채우려면 train.jsonl의 assistant를 수정한 뒤 헤더의 JSONL 다시 읽기를 사용하세요.)";
+        fieldsEl.appendChild(row);
+        return;
+      }
+
+      for (const key of keys) {
+        const val = obj[key];
+        const kind = fieldKindForValue(val);
+
+        const row = document.createElement("div");
+        row.className = "kv-row";
+        row.dataset.key = key;
+        row.dataset.kind = kind;
+
+        const label = document.createElement("div");
+        label.className = "kv-key";
+        label.textContent = key;
+
+        const hint = document.createElement("div");
+        hint.className = "kv-hint";
+        if (kind === "string") {
+          hint.textContent =
+            "문자열 그대로 입력 (줄바꿈·따옴표 등 JSON 이스케이프 없이 입력; 저장 시 JSON으로 직렬화됩니다).";
+        } else if (kind === "array-int") {
+          hint.textContent = "정수 목록: 쉼표 또는 공백·줄바꿈으로 구분 (예: 11, 12 또는 한 줄에 하나).";
+        } else if (kind === "boolean") {
+          hint.textContent = "true 또는 false (소문자).";
+        } else if (kind === "null") {
+          hint.textContent = "값 없음 — 빈 칸이면 null, 문자열 null 입력도 null로 처리합니다.";
+        } else if (kind === "number") {
+          hint.textContent = "숫자 한 개.";
+        } else {
+          hint.textContent = "JSON 형식 (편집 시 유효한 JSON이어야 합니다).";
+        }
+
+        const wrap = document.createElement("div");
+        wrap.className = "kv-value";
+
+        if (kind === "string") {
+          const ta = document.createElement("textarea");
+          ta.spellcheck = false;
+          ta.rows = 6;
+          ta.value = val;
+          wrap.appendChild(ta);
+        } else if (kind === "array-int") {
+          const ta = document.createElement("textarea");
+          ta.spellcheck = false;
+          ta.rows = 3;
+          ta.value = formatIntListForInput(val);
+          wrap.appendChild(ta);
+        } else if (kind === "boolean") {
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.value = String(val);
+          wrap.appendChild(inp);
+        } else if (kind === "null") {
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.placeholder = "(null)";
+          inp.value = "";
+          wrap.appendChild(inp);
+        } else if (kind === "number") {
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.value = String(val);
+          wrap.appendChild(inp);
+        } else {
+          const ta = document.createElement("textarea");
+          ta.spellcheck = false;
+          ta.rows = 8;
+          ta.value = JSON.stringify(val, null, 2);
+          wrap.appendChild(ta);
+        }
+
+        row.appendChild(label);
+        row.appendChild(hint);
+        row.appendChild(wrap);
+        fieldsEl.appendChild(row);
+      }
+    }
+
+    function collectAssistantContent() {
+      if (state.assistantMode === "fallback") {
+        return ($("assistant-fallback") && $("assistant-fallback").value) || "";
+      }
+
+      if (state.emptyAssistantObject) {
+        return "{}";
+      }
+
+      const fieldsEl = $("assistant-fields");
+      if (!fieldsEl) return "";
+
+      const rows = [...fieldsEl.querySelectorAll(".kv-row[data-key]")];
+      if (rows.length === 0) {
+        return ($("assistant-fallback") && $("assistant-fallback").value) || "";
+      }
+
+      const out = {};
+      for (const row of rows) {
+        const key = row.dataset.key;
+        const kind = row.dataset.kind;
+        const input = row.querySelector(".kv-value textarea, .kv-value input");
+
+        if (kind === "string") {
+          out[key] = input ? input.value : "";
+        } else if (kind === "array-int") {
+          out[key] = parseIntListFromInput(input ? input.value : "");
+        } else if (kind === "boolean") {
+          const s = (input && input.value.trim().toLowerCase()) || "";
+          if (s === "true") out[key] = true;
+          else if (s === "false") out[key] = false;
+          else throw new Error(`키 "${key}": true 또는 false만 입력 가능합니다.`);
+        } else if (kind === "null") {
+          const s = input ? input.value.trim() : "";
+          out[key] = s === "" || s.toLowerCase() === "null" ? null : s;
+          if (out[key] !== null) {
+            throw new Error(`키 "${key}": null 필드는 비우거나 null만 입력하세요.`);
+          }
+        } else if (kind === "number") {
+          const s = (input && input.value.trim()) || "";
+          if (s === "") throw new Error(`키 "${key}": 숫자를 입력하세요.`);
+          const n = Number(s);
+          if (!Number.isFinite(n)) throw new Error(`키 "${key}": 유효한 숫자가 아닙니다.`);
+          out[key] = n;
+        } else {
+          const raw = (input && input.value.trim()) || "";
+          if (!raw) throw new Error(`키 "${key}": JSON 값이 비어 있습니다.`);
+          try {
+            out[key] = JSON.parse(raw);
+          } catch (e) {
+            throw new Error(`키 "${key}": JSON 파싱 실패 — ${e.message || e}`);
+          }
+        }
+      }
+
+      return JSON.stringify(out, null, 2);
+    }
+
+    function setStatus(msg, isErr) {
+      const el = $("status");
+      el.textContent = msg || "";
+      el.classList.toggle("err", !!isErr);
+    }
+
+    function renderPdf(url, missing) {
+      const wrap = $("pdf-wrap");
+      wrap.innerHTML = "";
+      if (missing || !url) {
+        const d = document.createElement("div");
+        d.className = "pdf-placeholder";
+        d.textContent = missing ? "PDF 파일을 찾을 수 없습니다 (학습269건 등 경로 확인)." : "PDF 없음";
+        wrap.appendChild(d);
+        return;
+      }
+      const f = document.createElement("iframe");
+      f.title = "pdf";
+      f.src = url;
+      wrap.appendChild(f);
+    }
+
+    function fillSaveDateSelect(data) {
+      const sel = $("save-date-select");
+      if (!sel || !data) return;
+      const prev = sel.value;
+      const today = data.today || "";
+      sel.innerHTML = "";
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = `오늘 (${today})`;
+      sel.appendChild(opt0);
+      (data.files || []).forEach((f) => {
+        if (f.date === today) return;
+        const o = document.createElement("option");
+        o.value = f.date;
+        o.textContent = `${f.filename} (${f.record_count}건)`;
+        sel.appendChild(o);
+      });
+      const ok = [...sel.options].some((o) => o.value === prev);
+      sel.value = ok ? prev : "";
+    }
+
+    async function loadVerifiedFilesForSelect() {
+      const res = await fetch("/api/verified-files");
+      if (!res.ok) return;
+      fillSaveDateSelect(await res.json());
+    }
+
+    async function reloadVerifiedDisk() {
+      setStatus("검수 파일·캐시 새로고침…");
+      const res = await fetch("/api/reload-verified", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data.detail || "검수 새로고침 실패", true);
+        return;
+      }
+      fillSaveDateSelect(data);
+      setStatus(`검수 캐시 갱신 (${data.verified_count ?? "—"} id)`);
+    }
+
+    function renderVerifyBadge(verified, verifiedAt) {
+      const el = $("verify-badge");
+      if (!el) return;
+      if (verified) {
+        el.textContent = verifiedAt ? `검수됨 · ${verifiedAt}` : "검수됨";
+        el.classList.add("done");
+        el.title = verifiedAt
+          ? `최근 검수 시각(저장 파일 기준): ${verifiedAt}`
+          : "이 샘플 id에 대한 검수 기록이 있습니다.";
+      } else {
+        el.textContent = "미검수";
+        el.classList.remove("done");
+        el.title = "아직 이 id로 저장된 검수가 없습니다.";
+      }
+    }
+
+    async function loadRow(index) {
+      setStatus("로딩…");
+      const res = await fetch(`/api/row/${index}`);
+      if (!res.ok) {
+        setStatus("행 로드 실패: " + res.status, true);
+        return;
+      }
+      const row = await res.json();
+      state.index = row.index;
+      state.row = row;
+      state.messages = JSON.parse(JSON.stringify(row.messages));
+
+      $("nav-meta").textContent = `${row.index + 1} / ${row.total}`;
+      $("id-meta").textContent = row.id;
+      renderVerifyBadge(!!row.verified, row.verified_at || "");
+      const rawPreamble = row.user_content_preamble;
+      const preambleText =
+        rawPreamble == null ? "" : String(rawPreamble);
+      $("user-content").textContent =
+        preambleText.trim() !== ""
+          ? preambleText
+          : "(### Target Field 이전 지시문 없음)";
+      $("target-field").textContent = row.target_field || "(Target Field 블록 없음)";
+      $("evidence").textContent = row.evidence || "(Evidence 블록 없음)";
+      renderAssistantEditor(row.assistant || "");
+
+      $("btn-prev").disabled = row.index <= 0;
+      $("btn-next").disabled = row.index >= row.total - 1;
+
+      renderPdf(row.pdf_url, row.pdf_missing);
+      setStatus("");
+    }
+
+    async function submit() {
+      let assistant;
+      try {
+        assistant = collectAssistantContent();
+      } catch (e) {
+        setStatus(e.message || String(e), true);
+        return;
+      }
+      const msgs = JSON.parse(JSON.stringify(state.messages));
+      let found = false;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === "assistant") {
+          msgs[i].content = assistant;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        msgs.push({ role: "assistant", content: assistant });
+      }
+      setStatus("저장 중…");
+      const saveDate = ($("save-date-select") && $("save-date-select").value) || "";
+      const body = { id: state.row.id, messages: msgs };
+      if (saveDate) body.save_date = saveDate;
+      const res = await fetch("/api/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data.detail || "저장 실패", true);
+        return;
+      }
+      const n = data.record_count ?? data.count_today;
+      const sd = data.save_date || "";
+      setStatus(`저장됨: ${data.path} (${sd}, ${n}건)`);
+      state.messages = msgs;
+      renderVerifyBadge(!!data.effective_verified, data.effective_verified_at || "");
+      loadVerifiedFilesForSelect();
+    }
+
+    $("btn-prev").addEventListener("click", () => loadRow(state.index - 1));
+    $("btn-next").addEventListener("click", () => loadRow(state.index + 1));
+    $("btn-submit").addEventListener("click", submit);
+    $("btn-verified-refresh").addEventListener("click", reloadVerifiedDisk);
+    $("btn-reload").addEventListener("click", async () => {
+      setStatus("JSONL 다시 읽는 중…");
+      const res = await fetch("/api/reload", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus("reload 실패", true);
+        return;
+      }
+      await loadRow(Math.min(state.index, data.total - 1));
+      await loadVerifiedFilesForSelect();
+      setStatus(`reload 완료 (${data.total}행, 검수 기록 ${data.verified_count ?? "—"}건)`);
+    });
+
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((c) => {
+        const v = typeof c.verified_count === "number" ? ` | 검수된 서로 다른 id: ${c.verified_count}개` : "";
+        $("save-hint").textContent = `JSONL: ${c.jsonl} | 검수 읽기: ${c.verified_dir}/*.json 전부 병합 | 저장: 헤더에서 날짜 파일 선택${v}`;
+      })
+      .catch(() => {});
+
+    (async () => {
+      await loadVerifiedFilesForSelect();
+      await loadRow(0);
+    })();
+  </script>
+</body>
+</html>
