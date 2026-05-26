@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
@@ -214,11 +215,28 @@ def main() -> None:
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    is_ddp = local_rank != -1
+    if is_ddp:
+        torch.cuda.set_device(local_rank)
+
+    torch_dtype = (
+        torch.bfloat16
+        if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        else torch.float32
+    )
+    if torch.cuda.is_available():
+        device_map: str | dict[str, int] | None = (
+            {"": local_rank} if is_ddp else "auto"
+        )
+    else:
+        device_map = None
+
     model = AutoModelForCausalLM.from_pretrained(
         str(args.model_path),
         trust_remote_code=True,
-        dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32,
-        device_map="auto" if torch.cuda.is_available() else None,
+        dtype=torch_dtype,
+        device_map=device_map,
     )
     model.config.use_cache = False
 

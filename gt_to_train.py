@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Merge VIA-style gt.json (bbox + per-class value text) into RAG-KV train.jsonl labels.
+Merge VIA-style gt.json (bbox + per-class value text) and optional answer_sheet.xlsx
+into RAG-KV train.jsonl labels.
 
 For each train row:
   - Resolve the gt image by document stem (from ``id``) + page (from Evidence / chunk ids).
   - Build per-class text from gt ``regions`` (value boxes), reading order by (y, x).
   - Map ``보상한도금`` + ``공제금`` in gt to train field ``보상한도_공제금`` (newline-joined,
     보상한도금 first).
-  - Assistant JSON: copy existing ``verbatim_quote`` to ``llm_prediction`` if not already
+  - Assistant JSON (gt): copy existing ``verbatim_quote`` to ``llm_prediction`` if not already
     present; set ``verbatim_quote`` from gt. Other keys (e.g. ``evidence_chunk_ids``) are kept.
+  - Assistant JSON (``--answer-sheet-xlsx``): set ``answer_sheet`` from the spreadsheet cell
+    for the same document stem (``file_name`` without ``.pdf``) and target field column.
+    Train field ``담보내용`` maps to sheet column ``담보_내용``; ``임의출재율`` / ``임의수수료율``
+    map to ``임의_출재율`` / ``임의_수수료율``. Requires ``openpyxl``.
 """
 
 from __future__ import annotations
@@ -16,9 +21,18 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import re
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+# Train ``id`` suffix (Target Field key) -> ``answer_sheet.xlsx`` column header.
+_TRAIN_FIELD_TO_SHEET_COL: Dict[str, str] = {
+    "담보내용": "담보_내용",
+    "임의출재율": "임의_출재율",
+    "임의수수료율": "임의_수수료율",
+}
 
 LOGGER = logging.getLogger(__name__)
 
@@ -128,6 +142,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Exit with error if any row has no matching gt image.",
     )
+    p.add_argument(
+        "--answer-sheet-xlsx",
+        type=Path,
+        default=None,
+        help="Optional Excel (first sheet, ``file_name`` column). Adds ``answer_sheet`` to each "
+        "assistant JSON from the row matching the train document stem.",
+    )
     return p.parse_args()
 
 
@@ -236,18 +257,90 @@ def split_assistant_fence(content: str) -> Tuple[str, bool]:
     return raw, False
 
 
-def merge_assistant_json(content: str, gt_verbatim: str) -> str:
+def format_answer_sheet_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def sheet_column_for_train_field(field_key: str) -> str:
+    return _TRAIN_FIELD_TO_SHEET_COL.get(field_key, field_key)
+
+
+def load_answer_sheet_index(path: Path) -> Dict[str, Dict[str, Any]]:
+    try:
+        import openpyxl  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "Reading --answer-sheet-xlsx requires openpyxl. Install with: pip install openpyxl"
+        ) from e
+
+    wb = openpyxl.load_workbook(path.expanduser().resolve(), read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        rows = ws.iter_rows(values_only=True)
+        try:
+            header_row = next(rows)
+        except StopIteration:
+            return {}
+        headers: List[str] = []
+        for h in header_row:
+            headers.append("" if h is None else str(h))
+        if not headers or headers[0] != "file_name":
+            LOGGER.warning(
+                "answer_sheet: expected first column 'file_name', got %r. Proceeding anyway.",
+                headers[0] if headers else None,
+            )
+        index: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            if not row or row[0] is None:
+                continue
+            stem = str(row[0]).strip()
+            if stem.endswith(".pdf"):
+                stem = stem[: -len(".pdf")]
+            row_dict = {headers[i]: row[i] if i < len(row) else None for i in range(len(headers))}
+            dup = stem in index
+            if dup:
+                LOGGER.warning("Duplicate answer_sheet file_name stem=%r (overwriting).", stem[:120])
+            index[stem] = row_dict
+        return index
+    finally:
+        wb.close()
+
+
+def merge_assistant_json(
+    content: str,
+    *,
+    gt_verbatim: Optional[str] = None,
+    answer_sheet: Optional[str] = None,
+) -> str:
+    if gt_verbatim is None and answer_sheet is None:
+        return content
+
     raw, fenced = split_assistant_fence(content)
     obj = loads_assistant_obj(raw)
 
     use_pretty = "\n" in content.strip() or fenced
-    old_vq = obj.get("verbatim_quote", "")
-    if not isinstance(old_vq, str):
-        old_vq = str(old_vq)
 
-    if "llm_prediction" not in obj:
-        obj["llm_prediction"] = old_vq
-    obj["verbatim_quote"] = gt_verbatim
+    if gt_verbatim is not None:
+        old_vq = obj.get("verbatim_quote", "")
+        if not isinstance(old_vq, str):
+            old_vq = str(old_vq)
+
+        if "llm_prediction" not in obj:
+            obj["llm_prediction"] = old_vq
+        obj["verbatim_quote"] = gt_verbatim
+
+    if answer_sheet is not None:
+        obj["answer_sheet"] = answer_sheet
 
     if use_pretty:
         body = json.dumps(obj, ensure_ascii=False, indent=2)
@@ -275,8 +368,9 @@ def process_row(
     row: Dict[str, Any],
     gt_index: Dict[Tuple[str, int], Dict[str, Any]],
     strict: bool,
+    answer_index: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[Dict[str, Any], bool]:
-    """Returns (updated_row, True) if gt image matched and assistant was updated."""
+    """Returns (updated_row, True) if a matching gt image was found (verbatim updated from gt)."""
     row_id = row.get("id")
     if not isinstance(row_id, str):
         raise ValueError("Row missing string id.")
@@ -294,20 +388,48 @@ def process_row(
 
     page = infer_page_from_evidence(user_text, chunk_ids)
     gt_entry = gt_index.get((stem, page))
+    gt_verbatim: Optional[str] = None
+    matched_gt = False
     if gt_entry is None:
         msg = f"No gt image for stem={stem!r} page={page} (id={row_id!r})."
         if strict:
             raise FileNotFoundError(msg)
-        LOGGER.warning("%s Skipping assistant update.", msg)
+        LOGGER.warning("%s Skipping gt verbatim update.", msg)
+    else:
+        regions = gt_entry.get("regions") or []
+        if not isinstance(regions, list):
+            regions = []
+        class_texts = regions_to_class_texts(regions)
+        gt_verbatim = verbatim_for_field(class_texts, field)
+        matched_gt = True
+
+    answer_sheet_val: Optional[str] = None
+    if answer_index is not None:
+        sheet_row = answer_index.get(stem)
+        if sheet_row is None:
+            LOGGER.warning("No answer_sheet row for stem=%r (id=%r).", stem[:120], row_id)
+            answer_sheet_val = ""
+        else:
+            col = sheet_column_for_train_field(field)
+            if col not in sheet_row:
+                LOGGER.warning(
+                    "answer_sheet: missing column %r for field=%r (id=%r).",
+                    col,
+                    field,
+                    row_id,
+                )
+                answer_sheet_val = ""
+            else:
+                answer_sheet_val = format_answer_sheet_cell(sheet_row.get(col))
+
+    if gt_verbatim is None and answer_sheet_val is None:
         return row, False
 
-    regions = gt_entry.get("regions") or []
-    if not isinstance(regions, list):
-        regions = []
-    class_texts = regions_to_class_texts(regions)
-    gt_verbatim = verbatim_for_field(class_texts, field)
-
-    new_asst = merge_assistant_json(assistant_text, gt_verbatim)
+    new_asst = merge_assistant_json(
+        assistant_text,
+        gt_verbatim=gt_verbatim,
+        answer_sheet=answer_sheet_val,
+    )
     new_messages: List[Dict[str, Any]] = []
     replaced = False
     for m in messages:
@@ -323,7 +445,7 @@ def process_row(
 
     out = dict(row)
     out["messages"] = new_messages
-    return out, True
+    return out, matched_gt
 
 
 def main() -> None:
@@ -343,6 +465,12 @@ def main() -> None:
     gt_index = build_gt_index(gt)
     LOGGER.info("Loaded gt: %d images, %d (stem,page) index entries.", len(gt), len(gt_index))
 
+    answer_index: Optional[Dict[str, Dict[str, Any]]] = None
+    if args.answer_sheet_xlsx is not None:
+        ans_path = args.answer_sheet_xlsx.expanduser().resolve()
+        answer_index = load_answer_sheet_index(ans_path)
+        LOGGER.info("Loaded answer_sheet: %d rows from %s.", len(answer_index), ans_path)
+
     n_matched = 0
     n_unmatched = 0
     out_lines: List[str] = []
@@ -357,7 +485,12 @@ def main() -> None:
                 LOGGER.error("Line %s: invalid JSON: %s", lineno, e)
                 raise
             try:
-                new_row, matched = process_row(row, gt_index, strict=args.strict)
+                new_row, matched = process_row(
+                    row,
+                    gt_index,
+                    strict=args.strict,
+                    answer_index=answer_index,
+                )
             except FileNotFoundError:
                 raise
             except Exception as e:
@@ -374,7 +507,7 @@ def main() -> None:
         f.writelines(out_lines)
 
     LOGGER.info(
-        "Wrote %d lines to %s (assistant updated: %d, no gt stem+page: %d).",
+        "Wrote %d lines to %s (gt stem+page matched: %d, no gt stem+page: %d).",
         len(out_lines),
         out_path,
         n_matched,

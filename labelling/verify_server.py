@@ -36,7 +36,7 @@ _TRAIN_DIR = Path(__file__).resolve().parents[1]
 _PIPELINE_ROOT = _TRAIN_DIR.parent
 
 DEFAULT_JSONL = _TRAIN_DIR / "dataset" / "train_gt.jsonl"
-DEFAULT_PDF_DIR = _PIPELINE_ROOT / "학습269건"
+DEFAULT_PDF_DIR = _PIPELINE_ROOT / "/data1/share/maruchanpark/projects/edinburgh/koreanre/inference-pipeline/학습269건"
 DEFAULT_VERIFIED_DIR = _TRAIN_DIR / "labelling" / "verified"
 
 ROWS: List[Dict[str, Any]] = []
