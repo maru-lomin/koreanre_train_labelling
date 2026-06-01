@@ -10,6 +10,10 @@
       --bg: #f4f5f7;
       --panel: #fff;
       --accent: #2563eb;
+      /* 우측 세로: User 블록 전체 | Target+Evidence 블록 전체 | Output. (블록 = h2 + 스크롤) */
+      --right-user-block-max: 10vh;
+      --right-target-evidence-block-max: 44vh;
+      --right-target-subblock-max: 10vh;
     }
     * { box-sizing: border-box; }
     body {
@@ -47,6 +51,28 @@
     header button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+    header .nav-goto {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #374151;
+    }
+    header .nav-goto input[type="number"] {
+      width: 5.5rem;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    header button.danger {
+      background: #fef2f2;
+      color: #991b1b;
+      border-color: #fecaca;
+    }
+    header button.danger:hover:not(:disabled) {
+      background: #fee2e2;
     }
     header label.save-target {
       display: inline-flex;
@@ -118,7 +144,11 @@
     }
     .right {
       display: grid;
-      grid-template-rows: 0.5fr, 1fr, 5fr;
+      /* 세 행: User content | Target+Evidence | Output. minmax(0,…)로 상한 + 나머지는 Output */
+      grid-template-rows:
+        minmax(0, var(--right-user-block-max))
+        minmax(0, var(--right-target-evidence-block-max))
+        minmax(0, 1fr);
       min-height: 0;
       background: var(--panel);
     }
@@ -130,7 +160,8 @@
     }
     .block.meta-block {
       display: grid;
-      grid-template-rows: 0.5fr, 1fr;
+      /* Target은 상한 고정, Evidence가 중간 블록 안에서 나머지를 차지 */
+      grid-template-rows: minmax(0, var(--right-target-subblock-max)) minmax(0, 1fr);
       min-height: 0;
     }
     .block.meta-block .sub-block {
@@ -152,6 +183,8 @@
     }
     .scroll {
       flex: 1;
+      /* flex 자식 기본 min-height:auto면 긴 텍스트만큼 행이 부풀어 fr 조절이 무시됨 */
+      min-height: 0;
       overflow: auto;
       padding: 10px 12px;
       font-size: 13px;
@@ -240,9 +273,15 @@
   <header>
     <button type="button" id="btn-prev">이전</button>
     <button type="button" id="btn-next">다음</button>
+    <label class="nav-goto" title="화면에 보이는 것과 같이 1부터 시작하는 행 번호입니다.">
+      행 이동
+      <input type="number" id="nav-goto-input" min="1" step="1" inputmode="numeric" placeholder="1–N" aria-label="이동할 행 번호(1부터)" />
+    </label>
+    <button type="button" id="btn-goto">이동</button>
     <span class="meta" id="nav-meta">—</span>
     <span class="meta" id="id-meta"></span>
     <span class="verify-badge" id="verify-badge" title="검수 기록은 labelling/verified/*.json 에서 id 기준으로 병합됩니다.">미검수</span>
+    <button type="button" class="danger" id="btn-unverify" disabled title="verified 폴더의 모든 날짜 JSON에서 이 id 항목을 삭제합니다.">검수 취소</button>
     <label class="save-target" title="저장할 날짜 파일. 목록은 디스크에 있는 YYYY-MM-DD.json 입니다.">
       저장 파일
       <select id="save-date-select" aria-label="검수 저장 날짜 파일"></select>
@@ -290,6 +329,7 @@
   <script>
     let state = {
       index: 0,
+      total: 0,
       row: null,
       messages: [],
       assistantMode: "fields",
@@ -610,12 +650,20 @@
       }
       const row = await res.json();
       state.index = row.index;
+      state.total = row.total;
       state.row = row;
       state.messages = JSON.parse(JSON.stringify(row.messages));
 
       $("nav-meta").textContent = `${row.index + 1} / ${row.total}`;
       $("id-meta").textContent = row.id;
+      const gotoInp = $("nav-goto-input");
+      if (gotoInp) {
+        gotoInp.max = String(row.total);
+        gotoInp.placeholder = `1–${row.total}`;
+      }
       renderVerifyBadge(!!row.verified, row.verified_at || "");
+      const unv = $("btn-unverify");
+      if (unv) unv.disabled = !row.verified;
       const rawPreamble = row.user_content_preamble;
       const preambleText =
         rawPreamble == null ? "" : String(rawPreamble);
@@ -631,6 +679,7 @@
       $("btn-next").disabled = row.index >= row.total - 1;
 
       renderPdf(row.pdf_url, row.pdf_missing);
+      syncGotoInputFromState();
       setStatus("");
     }
 
@@ -673,11 +722,82 @@
       setStatus(`저장됨: ${data.path} (${sd}, ${n}건)`);
       state.messages = msgs;
       renderVerifyBadge(!!data.effective_verified, data.effective_verified_at || "");
+      const unvAfter = $("btn-unverify");
+      if (unvAfter) unvAfter.disabled = !data.effective_verified;
       loadVerifiedFilesForSelect();
+    }
+
+    function syncGotoInputFromState() {
+      const gotoInp = $("nav-goto-input");
+      if (gotoInp && state.row) gotoInp.value = String(state.index + 1);
+    }
+
+    async function gotoRowFromInput() {
+      const gotoInp = $("nav-goto-input");
+      const raw = gotoInp ? String(gotoInp.value).trim() : "";
+      const n = parseInt(raw, 10);
+      let total = state.total;
+      if (!total) {
+        try {
+          const r = await fetch("/api/config");
+          const c = await r.json();
+          if (typeof c.total === "number") total = c.total;
+        } catch (_) {}
+      }
+      if (!total) {
+        setStatus("총 행 수를 아직 알 수 없습니다. 잠시 후 다시 시도하세요.", true);
+        return;
+      }
+      if (!Number.isFinite(n) || n < 1) {
+        setStatus(`1 이상 ${total} 이하의 행 번호를 입력하세요.`, true);
+        return;
+      }
+      if (n > total) {
+        setStatus(`행 번호는 ${total} 이하여야 합니다.`, true);
+        return;
+      }
+      await loadRow(n - 1);
+      syncGotoInputFromState();
+    }
+
+    async function unverifyCurrent() {
+      if (!state.row || !state.row.verified) return;
+      const ok = window.confirm(
+        "이 샘플 id에 대해 labelling/verified 아래 모든 YYYY-MM-DD.json에서 해당 항목을 삭제합니다. 계속할까요?"
+      );
+      if (!ok) return;
+      setStatus("검수 취소 처리 중…");
+      const res = await fetch("/api/unverify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: state.row.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data.detail || "검수 취소 실패", true);
+        return;
+      }
+      const n = data.removed_entries ?? 0;
+      const files = (data.modified_files || []).length;
+      if (data.still_verified) {
+        setStatus(`삭제했으나 병합 후에도 검수 기록이 남아 있습니다. (${n}건 삭제, ${files}개 파일 수정)`, true);
+      } else {
+        setStatus(`검수 취소: id 항목 ${n}건 삭제 (${files}개 파일 수정)`);
+      }
+      await loadVerifiedFilesForSelect();
+      await loadRow(state.index);
     }
 
     $("btn-prev").addEventListener("click", () => loadRow(state.index - 1));
     $("btn-next").addEventListener("click", () => loadRow(state.index + 1));
+    $("btn-goto").addEventListener("click", () => gotoRowFromInput());
+    const gotoInpEl = $("nav-goto-input");
+    if (gotoInpEl) {
+      gotoInpEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") gotoRowFromInput();
+      });
+    }
+    $("btn-unverify").addEventListener("click", unverifyCurrent);
     $("btn-submit").addEventListener("click", submit);
     $("btn-verified-refresh").addEventListener("click", reloadVerifiedDisk);
     $("btn-reload").addEventListener("click", async () => {

@@ -270,7 +270,7 @@ def main() -> None:
         gradient_accumulation_steps=args.grad_accum,
         logging_steps=args.logging_steps,
         save_strategy="epoch",
-        save_total_limit=2,
+        # save_total_limit unset: keep every epoch checkpoint (HF default is None).
         bf16=use_bf16,
         fp16=torch.cuda.is_available() and not use_bf16,
         gradient_checkpointing=True,

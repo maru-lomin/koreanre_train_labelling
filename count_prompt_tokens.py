@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
         "--jsonl",
         type=Path,
         nargs="+",
-        default=[root / "train_set" / "train.jsonl"],
+        default=[root / "train_set" / "train_data_2.jsonl"],
         help="One or more JSONL files (same format as train.py: messages, optional id).",
     )
     p.add_argument(

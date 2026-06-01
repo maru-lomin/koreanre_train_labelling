@@ -48,6 +48,10 @@ _DATE_VERIFIED_JSON = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 _DATE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+class UnverifyRequest(BaseModel):
+    id: str = Field(..., description="Row id to remove from all dated verified JSON files under verified_dir")
+
+
 class VerifyRequest(BaseModel):
     id: str = Field(..., description="Row id from train.jsonl")
     messages: List[Dict[str, str]] = Field(
@@ -378,6 +382,53 @@ def build_app() -> FastAPI:
             "verified_at": record["verified_at"],
             "effective_verified": after is not None,
             "effective_verified_at": eff_at,
+        }
+
+    @app.post("/api/unverify")
+    def api_unverify(req: UnverifyRequest) -> Dict[str, Any]:
+        """Remove every entry with this id from all YYYY-MM-DD.json under verified_dir, then refresh merge cache."""
+        verified_dir = CONFIG["verified_dir"]
+        if not isinstance(verified_dir, Path) or not verified_dir.is_dir():
+            raise HTTPException(400, "verified_dir not configured or missing")
+        target = str(req.id).strip()
+        if not target:
+            raise HTTPException(400, "id is empty")
+
+        modified_paths: List[str] = []
+        removed_total = 0
+        for path in _list_verified_json_paths(verified_dir):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            entries = _entries_from_verified_raw(raw)
+            kept: List[Dict[str, Any]] = []
+            removed_here = 0
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                rid = e.get("id")
+                if rid is not None and str(rid) == target:
+                    removed_here += 1
+                    continue
+                kept.append(e)
+            if removed_here:
+                removed_total += removed_here
+                path.write_text(
+                    json.dumps(kept, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                modified_paths.append(str(path))
+
+        n = refresh_verified_cache()
+        still = VERIFIED_BY_ID.get(target)
+        return {
+            "ok": True,
+            "id": target,
+            "removed_entries": removed_total,
+            "modified_files": modified_paths,
+            "verified_count": n,
+            "still_verified": still is not None,
         }
 
     return app
